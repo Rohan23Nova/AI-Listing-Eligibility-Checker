@@ -436,3 +436,45 @@ def test_eligibility_gate_boundary_exact_0_6():
     
     assert score.gate_applied is False
     assert score.gate_reason is None
+
+def test_eligibility_gate_with_max_llm_score():
+    """
+    REGRESSION TEST: Low search-bot access (1/5) + MAX possible LLM scores + Perfect structure.
+    Proves the gate applies AFTER LLM points are added, preventing LLM from silently undoing the cap.
+    """
+    from backend.models import ContentResult, EmpiricalResult
+    
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    search_uas = [b.user_agent for b in SEARCH_BOTS]
+    for r in access.robots_per_bot:
+        if r.bot.user_agent in search_uas[1:]:
+            r.allowed = False
+            
+    structure = _make_structure_result()
+    
+    # Fake perfect LLM scores
+    content = ContentResult(
+        url="https://example.com",
+        body_word_count=1000,
+        likely_spa=False,
+        playwright_used=False,
+        rendered_word_count=None,
+        llm_quality_score=1.0,  # Max score
+        llm_quality_label="high",
+        llm_quality_reasoning="Excellent",
+    )
+    empirical = EmpiricalResult(
+        url="https://example.com",
+        tier_reached=1,
+        ua_matrix=[],
+        geo_anomaly_detected=False,
+        llm_citation_score=1.0, # Max score
+        llm_citation_label="high",
+        llm_citation_reasoning="Excellent",
+    )
+    
+    score = compute_score(access, structure, content, empirical)
+    
+    assert score.gate_applied is True
+    assert score.total <= 45.0, f"Score was {score.total}, LLM points bypassed the gate!"
+    assert score.verdict in ("Poor", "Fair")
