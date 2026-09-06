@@ -1,0 +1,64 @@
+# render.yaml — Infrastructure-as-Code for one-click Render deploy
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy the entire app (backend + frontend) as a single Render web service.
+# The FastAPI backend serves the frontend SPA at GET /,
+# so there is no separate static hosting needed.
+#
+# Zero paid infrastructure: all settings target the Render free tier.
+
+services:
+  - type: web
+    name: ai-listing-checker
+    runtime: python
+    region: oregon        # free tier available
+    plan: free
+
+    # Build
+    buildCommand: pip install -r requirements.txt
+
+    # Start — uvicorn picks PORT from Render's injected $PORT env var
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+
+    # Health check — Render uses this to detect when the service is up
+    healthCheckPath: /health
+
+    # Environment variables — set real values in the Render dashboard.
+    # These defaults make the service work immediately (rule-based only)
+    # without any API keys. Set GROQ_API_KEY + ENABLE_LLM=true for full scoring.
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+
+      # LLM (optional — tool works without keys, just labels scores "unavailable")
+      - key: LLM_PROVIDER
+        value: groq
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_API_KEY
+        sync: false          # set in dashboard — never committed to repo
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ENABLE_LLM
+        value: "false"       # flip to "true" once GROQ_API_KEY is set
+
+      # Playwright — disabled on Render free tier (no browser binary)
+      # The SPA heuristic still fires and the UI explains the limitation.
+      - key: ENABLE_PLAYWRIGHT
+        value: "false"
+
+      # Cloudflare Worker geo trip-wire (Tier-2)
+      - key: ENABLE_GEO_CHECK
+        value: "false"       # flip to "true" once workers are deployed
+      - key: GEO_WORKER_URL_US
+        sync: false
+      - key: GEO_WORKER_URL_EU
+        sync: false
+      - key: GEO_WORKER_URL_APAC
+        sync: false
+
+      # SQLite — use /tmp on Render (ephemeral but fine for demo purposes)
+      # Persist history across restarts by upgrading to a Render Postgres add-on
+      # or an external SQLite host; for the hackathon demo, /tmp is sufficient.
+      - key: SQLITE_DB_PATH
+        value: /tmp/history.db

@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- API URL — leave empty for same-origin (Render); set for split deploys -->
+  <meta name="api-url" content="" />
+  <!-- SEO / OG (this page is itself AI-indexable — we practice what we preach) -->
+  <meta name="description" content="Empirical AI eligibility checker — find out if ChatGPT, Perplexity, Claude and Google AI can crawl, understand and cite your website." />
+  <meta property="og:title" content="AI Listing Eligibility Checker" />
+  <meta property="og:description" content="Get a scored report showing whether AI search/answer engines can find and cite your site. Checks robots.txt, UA blocking, structured data, and more." />
+  <meta property="og:type" content="website" />
   <title>AI Listing Eligibility Checker</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -124,7 +131,14 @@
 </main>
 
 <script>
-const API = ''; // same origin; change to your backend URL when deployed
+// API base URL — auto-detected from <meta name="api-url"> or same-origin fallback.
+// When the frontend and backend are on the same Render service (the default),
+// this is always '' (same origin). For split deploys, set the meta tag to
+// point at the backend URL.
+const _metaApi = document.querySelector('meta[name="api-url"]');
+const API = (_metaApi && _metaApi.content && _metaApi.content !== '__API_URL__')
+  ? _metaApi.content.replace(/\/$/, '')
+  : '';
 
 // ── History ────────────────────────────────────────────────────────────────
 let historyVisible = false;
