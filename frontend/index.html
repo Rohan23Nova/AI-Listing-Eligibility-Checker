@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Listing Eligibility Checker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom animations */
+    @keyframes spin-slow { to { transform: rotate(360deg); } }
+    .spin-slow { animation: spin-slow 2s linear infinite; }
+
+    @keyframes fade-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fade-in 0.4s ease-out forwards; }
+
+    /* Score ring */
+    .score-ring { transition: stroke-dashoffset 1s ease-out; }
+
+    /* Verdict colors */
+    .verdict-Excellent { color: #059669; }
+    .verdict-Good      { color: #2563eb; }
+    .verdict-Fair      { color: #d97706; }
+    .verdict-Poor      { color: #dc2626; }
+
+    .bg-verdict-Excellent { background: #d1fae5; border-color: #059669; }
+    .bg-verdict-Good      { background: #dbeafe; border-color: #2563eb; }
+    .bg-verdict-Fair      { background: #fef3c7; border-color: #d97706; }
+    .bg-verdict-Poor      { background: #fee2e2; border-color: #dc2626; }
+
+    /* Severity badges */
+    .sev-critical { background:#fee2e2; color:#991b1b; }
+    .sev-high     { background:#ffedd5; color:#9a3412; }
+    .sev-medium   { background:#fef9c3; color:#854d0e; }
+    .sev-low      { background:#f0fdf4; color:#166534; }
+
+    /* Per-bot table */
+    .bot-training { background:#eff6ff; }
+    .bot-search   { background:#f0fdf4; }
+    .blocked      { background:#fee2e2 !important; }
+
+    /* Progress bar */
+    .progress-fill { transition: width 0.8s ease-out; }
+
+    /* Collapsible */
+    .collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+    .collapsible-content.open { max-height: 9999px; }
+
+    pre { white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800">
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+  <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <svg class="w-7 h-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+      </svg>
+      <span class="font-bold text-slate-900 text-lg">AI Listing Eligibility Checker</span>
+    </div>
+    <button id="historyBtn" onclick="toggleHistory()"
+      class="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      History
+    </button>
+  </div>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main class="max-w-4xl mx-auto px-4 py-8">
+
+  <!-- URL input card -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+    <h1 class="text-2xl font-bold text-slate-900 mb-1">Can AI systems find your site?</h1>
+    <p class="text-slate-500 text-sm mb-4">
+      Enter any URL to get an empirical AI eligibility report — robots.txt access,
+      UA-spoof testing, structured data, and more. <strong>Training</strong> and
+      <strong>search/answer</strong> bots are shown separately.
+    </p>
+    <form onsubmit="analyzeUrl(event)" class="flex gap-2">
+      <input id="urlInput" type="text" placeholder="https://example.com"
+        class="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+        autocomplete="off" spellcheck="false" />
+      <button type="submit" id="analyzeBtn"
+        class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold px-6 py-3 rounded-xl text-sm transition-colors disabled:opacity-50">
+        Analyze
+      </button>
+    </form>
+    <div id="errorMsg" class="hidden mt-3 text-red-600 text-sm font-medium"></div>
+  </div>
+
+  <!-- Loading state -->
+  <div id="loading" class="hidden text-center py-12">
+    <svg class="spin-slow w-10 h-10 mx-auto text-indigo-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+    </svg>
+    <p class="text-slate-500 text-sm">Checking robots.txt, fetching with bot UAs, analyzing structure…</p>
+    <p class="text-slate-400 text-xs mt-1">This takes 5–15 seconds for a full analysis.</p>
+  </div>
+
+  <!-- History panel -->
+  <div id="historyPanel" class="hidden mb-6">
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="font-bold text-slate-900 mb-3 flex items-center gap-2">
+        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Analysis History
+      </h2>
+      <div id="historyList" class="space-y-2 text-sm text-slate-500">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Report -->
+  <div id="report" class="hidden space-y-5 fade-in"></div>
+
+</main>
+
+<script>
+const API = ''; // same origin; change to your backend URL when deployed
+
+// ── History ────────────────────────────────────────────────────────────────
+let historyVisible = false;
+
+async function toggleHistory() {
+  historyVisible = !historyVisible;
+  const panel = document.getElementById('historyPanel');
+  panel.classList.toggle('hidden', !historyVisible);
+  if (historyVisible) await loadHistory();
+}
+
+async function loadHistory() {
+  const el = document.getElementById('historyList');
+  try {
+    const res = await fetch(`${API}/history`);
+    const data = await res.json();
+    if (!data.urls || data.urls.length === 0) {
+      el.innerHTML = '<span class="text-slate-400">No URLs analyzed yet.</span>';
+      return;
+    }
+    el.innerHTML = data.urls.map(u => `
+      <div class="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+        <button onclick="loadFromHistory('${encodeURIComponent(u.url)}')"
+          class="text-indigo-600 hover:underline truncate max-w-xs text-left">${u.url}</button>
+        <span class="ml-3 flex-shrink-0 font-semibold verdict-${u.latest_verdict}">${u.latest_score?.toFixed(1)} — ${u.latest_verdict}</span>
+      </div>
+    `).join('');
+  } catch {
+    el.innerHTML = '<span class="text-red-500">Failed to load history.</span>';
+  }
+}
+
+async function loadFromHistory(encodedUrl) {
+  const url = decodeURIComponent(encodedUrl);
+  document.getElementById('urlInput').value = url;
+  historyVisible = false;
+  document.getElementById('historyPanel').classList.add('hidden');
+  await runAnalysis(url);
+}
+
+// ── Analysis ───────────────────────────────────────────────────────────────
+async function analyzeUrl(e) {
+  e.preventDefault();
+  const raw = document.getElementById('urlInput').value.trim();
+  if (!raw) return;
+  await runAnalysis(raw);
+}
+
+async function runAnalysis(url) {
+  setLoading(true);
+  clearError();
+  hideReport();
+
+  try {
+    const res = await fetch(`${API}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    renderReport(data);
+  } catch (err) {
+    showError(`Analysis failed: ${err.message}`);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function setLoading(on) {
+  document.getElementById('loading').classList.toggle('hidden', !on);
+  document.getElementById('analyzeBtn').disabled = on;
+}
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function clearError() { document.getElementById('errorMsg').classList.add('hidden'); }
+function hideReport() {
+  const el = document.getElementById('report');
+  el.innerHTML = '';
+  el.classList.add('hidden');
+}
+
+// ── Report renderer ────────────────────────────────────────────────────────
+function renderReport(d) {
+  const score = d.score;
+  const el = document.getElementById('report');
+  el.classList.remove('hidden');
+
+  el.innerHTML = [
+    renderScoreCard(d, score),
+    renderBotTable(d),
+    renderIssues(score),
+    renderBreakdown(score),
+    renderEvidencePanel(d),
+    renderFixPack(d),
+  ].join('');
+
+  // Animate score ring
+  const circumference = 2 * Math.PI * 52;
+  const offset = circumference - (score.total / 100) * circumference;
+  setTimeout(() => {
+    const ring = document.getElementById('scoreRing');
+    if (ring) ring.style.strokeDashoffset = offset;
+  }, 100);
+}
+
+function verdictEmoji(v) {
+  return { Excellent:'🟢', Good:'🔵', Fair:'🟡', Poor:'🔴' }[v] || '⚪';
+}
+
+function renderScoreCard(d, score) {
+  const circumference = 2 * Math.PI * 52;
+  const isLlmUnavailable = !score.llm_available;
+  const ts = new Date(d.timestamp).toLocaleString();
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex items-start gap-6">
+    <!-- Score ring -->
+    <div class="flex-shrink-0 flex flex-col items-center">
+      <svg width="120" height="120" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" stroke-width="10"/>
+        <circle id="scoreRing" cx="60" cy="60" r="52" fill="none"
+          stroke="${scoreColor(score.total)}" stroke-width="10"
+          stroke-linecap="round"
+          stroke-dasharray="${circumference}"
+          stroke-dashoffset="${circumference}"
+          transform="rotate(-90 60 60)"
+          class="score-ring"/>
+        <text x="60" y="56" text-anchor="middle" font-size="24" font-weight="700"
+          fill="${scoreColor(score.total)}">${score.total.toFixed(0)}</text>
+        <text x="60" y="72" text-anchor="middle" font-size="11" fill="#94a3b8">/ 100</text>
+      </svg>
+      <span class="font-bold verdict-${score.verdict} text-lg">${verdictEmoji(score.verdict)} ${score.verdict}</span>
+    </div>
+    <!-- Info -->
+    <div class="flex-1 min-w-0">
+      <p class="text-xs text-slate-400 mb-1">${ts} · ${d.analysis_duration_ms}ms</p>
+      <p class="font-semibold text-slate-900 truncate mb-3">${d.url}</p>
+      <div class="grid grid-cols-2 gap-2 text-sm">
+        <div class="bg-slate-50 rounded-lg p-2">
+          <p class="text-xs text-slate-500 mb-0.5">Search/Answer bots</p>
+          <p class="font-bold text-slate-800">${d.search_bots_summary}</p>
+        </div>
+        <div class="bg-slate-50 rounded-lg p-2">
+          <p class="text-xs text-slate-500 mb-0.5">Training bots</p>
+          <p class="font-bold text-slate-800">${d.training_bots_summary}</p>
+        </div>
+      </div>
+      ${isLlmUnavailable ? `
+      <p class="mt-3 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
+        ⚠️ LLM scoring unavailable — score is rule-based only (out of 70 pts, scaled to 100).
+        Set <code>GROQ_API_KEY</code> and <code>ENABLE_LLM=true</code> to enable full scoring.
+      </p>` : ''}
+      <p class="mt-2 text-xs text-slate-400 italic">${d.llms_txt_note}</p>
+    </div>
+  </div>`;
+}
+
+function scoreColor(s) {
+  if (s >= 85) return '#059669';
+  if (s >= 65) return '#2563eb';
+  if (s >= 40) return '#d97706';
+  return '#dc2626';
+}
+
+function renderBotTable(d) {
+  const training = d.per_bot_table.filter(r => r.category === 'training');
+  const search = d.per_bot_table.filter(r => r.category === 'search');
+
+  function botRow(r) {
+    const robotsBadge = r.robots_allowed
+      ? '<span class="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-0.5 rounded-full text-xs font-medium">✓ Allow</span>'
+      : '<span class="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-0.5 rounded-full text-xs font-medium">✗ Block</span>';
+    const uaStatus = r.ua_http_status || '—';
+    const uaBadge = r.ua_blocked
+      ? `<span class="text-red-700 font-semibold">${uaStatus} ⚠</span>`
+      : `<span class="text-green-700">${uaStatus}</span>`;
+    const paths = r.disallowed_paths.length > 0
+      ? `<span class="text-xs text-slate-400">${r.disallowed_paths.slice(0,2).join(', ')}${r.disallowed_paths.length > 2 ? ` +${r.disallowed_paths.length-2}` : ''}</span>`
+      : '';
+    const rowClass = (r.ua_blocked || !r.robots_allowed) ? 'blocked' : (r.category === 'training' ? 'bot-training' : 'bot-search');
+    return `
+    <tr class="${rowClass}">
+      <td class="px-3 py-2 font-medium text-slate-800">${r.bot_name}</td>
+      <td class="px-3 py-2 text-slate-500 text-xs">${r.provider}</td>
+      <td class="px-3 py-2">${robotsBadge}</td>
+      <td class="px-3 py-2">${uaBadge}</td>
+      <td class="px-3 py-2 text-slate-500">${r.crawl_delay != null ? r.crawl_delay+'s' : '—'}</td>
+      <td class="px-3 py-2">${paths}</td>
+    </tr>`;
+  }
+
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+      <h2 class="font-bold text-slate-900">Per-Bot Access Table</h2>
+      <div class="flex gap-2 text-xs">
+        <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">🎓 Training</span>
+        <span class="bg-green-50 text-green-700 px-2 py-0.5 rounded-full">🔍 Search/Answer</span>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <th class="px-3 py-2 text-left">Bot</th>
+            <th class="px-3 py-2 text-left">Provider</th>
+            <th class="px-3 py-2 text-left">robots.txt</th>
+            <th class="px-3 py-2 text-left">UA Status</th>
+            <th class="px-3 py-2 text-left">Delay</th>
+            <th class="px-3 py-2 text-left">Blocked Paths</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          <tr class="bg-blue-50/50"><td colspan="6" class="px-3 py-1 text-xs font-semibold text-blue-600 uppercase tracking-wider">🎓 Training Bots — blocking these won't remove you from AI search results</td></tr>
+          ${training.map(botRow).join('')}
+          <tr class="bg-green-50/50"><td colspan="6" class="px-3 py-1 text-xs font-semibold text-green-600 uppercase tracking-wider">🔍 Search/Answer Bots — blocking these removes you from AI-powered search</td></tr>
+          ${search.map(botRow).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderIssues(score) {
+  if (!score.issues || score.issues.length === 0) {
+    return `<div class="bg-green-50 border border-green-200 rounded-2xl p-5 text-green-800">
+      <p class="font-bold">✅ No significant issues found!</p>
+      <p class="text-sm mt-1">This site is well-configured for AI crawlability.</p>
+    </div>`;
+  }
+  const items = score.issues.map(i => `
+    <div class="flex gap-3 items-start py-3 border-b border-slate-100 last:border-0">
+      <span class="sev-${i.severity} text-xs font-bold px-2 py-0.5 rounded-full mt-0.5 flex-shrink-0 uppercase">${i.severity}</span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <p class="font-semibold text-slate-900 text-sm">${i.title}</p>
+          <span class="text-xs text-slate-400 flex-shrink-0">-${i.points_lost} pts</span>
+        </div>
+        <p class="text-slate-600 text-xs mt-0.5">${i.detail}</p>
+        <p class="text-indigo-600 text-xs mt-1 font-medium">💡 ${i.fix}</p>
+      </div>
+    </div>`).join('');
+
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+    <h2 class="font-bold text-slate-900 mb-3 flex items-center gap-2">
+      <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+      </svg>
+      Prioritized Issues (${score.issues.length})
+    </h2>
+    <div>${items}</div>
+  </div>`;
+}
+
+function renderBreakdown(score) {
+  const items = score.breakdown.map(item => {
+    const pct = item.points_possible > 0 ? (item.points_earned / item.points_possible) * 100 : 0;
+    const color = pct >= 85 ? '#059669' : pct >= 55 ? '#2563eb' : pct >= 25 ? '#d97706' : '#dc2626';
+    const isLlm = item.label.includes('LLM');
+    return `
+    <div class="py-2 border-b border-slate-100 last:border-0">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm text-slate-700 flex items-center gap-1">
+          ${isLlm ? '<span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">LLM</span>' : ''}
+          ${item.label}
+        </span>
+        <span class="text-xs font-mono font-semibold" style="color:${color}">${item.points_earned}/${item.points_possible}</span>
+      </div>
+      <div class="w-full bg-slate-100 rounded-full h-1.5">
+        <div class="h-1.5 rounded-full progress-fill" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">${item.reason.slice(0, 120)}${item.reason.length > 120 ? '…' : ''}</p>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+    <h2 class="font-bold text-slate-900 mb-3">Score Breakdown</h2>
+    <div>${items}</div>
+    <p class="text-xs text-slate-400 mt-3 italic">
+      Every point is fully explainable. No black-box scoring.
+      Weights: Access 35pts · Structure 35pts · LLM Content Quality 15pts · LLM Citation Likelihood 15pts.
+    </p>
+  </div>`;
+}
+
+function renderEvidencePanel(d) {
+  const ev = d.raw_evidence;
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <button onclick="toggleCollapsible('evidenceBody')"
+      class="w-full px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+      <h2 class="font-bold text-slate-900 flex items-center gap-2">
+        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        Raw Evidence
+      </h2>
+      <svg id="evidenceChevron" class="w-4 h-4 text-slate-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </button>
+    <div id="evidenceBody" class="collapsible-content">
+      <div class="px-5 pb-5">
+        <p class="text-xs text-slate-400 mb-2">Full raw evidence backing every score — for transparency and debugging.</p>
+        <pre class="bg-slate-50 rounded-xl p-4 text-xs text-slate-600 overflow-auto max-h-80 border border-slate-200">${JSON.stringify(ev, null, 2)}</pre>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderFixPack(d) {
+  if (!d.fix_pack || d.fix_pack.length === 0) {
+    return `<div class="bg-green-50 border border-green-200 rounded-2xl p-4 text-sm text-green-700">
+      ✅ No fix-pack needed — all checks passed.
+    </div>`;
+  }
+
+  const items = d.fix_pack.map((fp, i) => `
+    <div class="border border-slate-200 rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-2 bg-slate-50">
+        <div>
+          <p class="font-mono text-sm font-semibold text-slate-800">${fp.filename}</p>
+          <p class="text-xs text-slate-500">${fp.description.slice(0, 100)}</p>
+        </div>
+        <button onclick="downloadFix(${i})"
+          class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium flex-shrink-0 ml-3">
+          Download
+        </button>
+      </div>
+      <pre class="bg-white px-4 py-3 text-xs text-slate-600 max-h-40 overflow-auto border-t border-slate-100">${escapeHtml(fp.content)}</pre>
+    </div>`).join('');
+
+  // Store fix pack globally for download
+  window._fixPack = d.fix_pack;
+  window._fixUrl = d.url;
+
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+    <h2 class="font-bold text-slate-900 mb-1 flex items-center gap-2">
+      <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+      </svg>
+      Fix-Pack (${d.fix_pack.length} files)
+    </h2>
+    <p class="text-xs text-slate-400 mb-4">
+      Download and apply these files to improve your score. Re-run the analysis after applying to see the improvement.
+    </p>
+    <div class="space-y-3">${items}</div>
+    <button onclick="downloadAll()"
+      class="mt-4 w-full text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-4 py-2 rounded-xl transition-colors">
+      ⬇ Download All Fix Files
+    </button>
+  </div>`;
+}
+
+function downloadFix(index) {
+  const fp = window._fixPack[index];
+  if (!fp) return;
+  const blob = new Blob([fp.content], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fp.filename;
+  a.click();
+}
+
+function downloadAll() {
+  window._fixPack?.forEach((_, i) => downloadFix(i));
+}
+
+function toggleCollapsible(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('open');
+  const chevron = document.getElementById('evidenceChevron');
+  if (chevron) chevron.style.transform = el.classList.contains('open') ? 'rotate(180deg)' : '';
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Keyboard shortcut: Enter ───────────────────────────────────────────────
+document.getElementById('urlInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { analyzeUrl(e); }
+});
+
+// ── Pre-fill from URL hash (shareable links) ───────────────────────────────
+if (location.hash.startsWith('#url=')) {
+  const url = decodeURIComponent(location.hash.slice(5));
+  document.getElementById('urlInput').value = url;
+  runAnalysis(url);
+}
+</script>
+</body>
+</html>

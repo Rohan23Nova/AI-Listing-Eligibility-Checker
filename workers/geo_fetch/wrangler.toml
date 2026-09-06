@@ -1,0 +1,8 @@
+name = "geo-fetch"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# Deploy multiple instances with different names for different regions:
+# US:   wrangler publish --name geo-fetch-us
+# EU:   wrangler publish --name geo-fetch-eu --route "*.workers.dev/geo-fetch-eu"
+# APAC: wrangler publish --name geo-fetch-apac
