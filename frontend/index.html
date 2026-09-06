@@ -189,7 +189,20 @@ async function runAnalysis(url) {
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    renderReport(data);
+
+    // Fetch history for this URL to show timeline
+    let urlHistory = [];
+    try {
+      const hRes = await fetch(`${API}/history/${encodeURIComponent(url)}`);
+      if (hRes.ok) {
+        const hData = await hRes.json();
+        urlHistory = hData.history || [];
+      }
+    } catch {}
+
+    renderReport(data, urlHistory);
+    // Update share link in address bar (no page reload)
+    history.replaceState(null, '', `#url=${encodeURIComponent(url)}`);
   } catch (err) {
     showError(`Analysis failed: ${err.message}`);
   } finally {
@@ -214,14 +227,15 @@ function hideReport() {
   el.classList.add('hidden');
 }
 
-// ── Report renderer ────────────────────────────────────────────────────────
-function renderReport(d) {
+// ── Report renderer ────────────────────────────────────────────────────────────
+function renderReport(d, urlHistory = []) {
   const score = d.score;
   const el = document.getElementById('report');
   el.classList.remove('hidden');
 
   el.innerHTML = [
     renderScoreCard(d, score),
+    urlHistory.length > 1 ? renderHistoryTimeline(urlHistory) : '',
     renderBotTable(d),
     renderIssues(score),
     renderBreakdown(score),
@@ -240,6 +254,69 @@ function renderReport(d) {
 
 function verdictEmoji(v) {
   return { Excellent:'🟢', Good:'🔵', Fair:'🟡', Poor:'🔴' }[v] || '⚪';
+}
+
+// ── History Timeline ──────────────────────────────────────────────────────────
+function renderHistoryTimeline(history) {
+  // history is newest-first; reverse for chronological sparkline
+  const chron = [...history].reverse();
+  const scores = chron.map(h => h.score);
+  const maxS = Math.max(...scores, 1);
+  const minS = Math.min(...scores, 0);
+  const range = maxS - minS || 1;
+
+  // SVG sparkline
+  const W = 260, H = 48, pad = 4;
+  const points = scores.map((s, i) => {
+    const x = pad + (i / (scores.length - 1 || 1)) * (W - 2 * pad);
+    const y = H - pad - ((s - minS) / range) * (H - 2 * pad);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const first = chron[0];
+  const last = chron[chron.length - 1];
+  const delta = last.score - first.score;
+  const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
+  const deltaColor = delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-slate-400';
+
+  const rows = history.slice(0, 8).map(h => {
+    const ts = new Date(h.timestamp).toLocaleString();
+    return `<tr class="border-b border-slate-100 last:border-0">
+      <td class="py-1 text-slate-500 text-xs">${ts}</td>
+      <td class="py-1 text-right font-semibold" style="color:${scoreColor(h.score)}">${h.score.toFixed(1)}</td>
+      <td class="py-1 text-right text-xs verdict-${h.verdict}">${h.verdict}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-bold text-slate-900 flex items-center gap-2">
+        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+        </svg>
+        Score History (${history.length} runs)
+      </h2>
+      <span class="font-bold ${deltaColor} text-sm">${deltaStr} pts since first run</span>
+    </div>
+    <svg width="${W}" height="${H}" class="w-full mb-3" preserveAspectRatio="none">
+      <polyline points="${points}" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>
+      ${scores.map((s, i) => {
+        const x = pad + (i / (scores.length - 1 || 1)) * (W - 2 * pad);
+        const y = H - pad - ((s - minS) / range) * (H - 2 * pad);
+        return `<circle cx="${x}" cy="${y}" r="3" fill="${scoreColor(s)}" stroke="white" stroke-width="1"/>`;
+      }).join('')}
+    </svg>
+    <table class="w-full text-sm">
+      <thead><tr class="text-xs text-slate-400 uppercase">
+        <th class="text-left pb-1">When</th>
+        <th class="text-right pb-1">Score</th>
+        <th class="text-right pb-1">Verdict</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
 }
 
 function renderScoreCard(d, score) {
@@ -267,7 +344,17 @@ function renderScoreCard(d, score) {
     </div>
     <!-- Info -->
     <div class="flex-1 min-w-0">
-      <p class="text-xs text-slate-400 mb-1">${ts} · ${d.analysis_duration_ms}ms</p>
+      <div class="flex items-center justify-between mb-1">
+        <p class="text-xs text-slate-400">${ts} · ${d.analysis_duration_ms}ms</p>
+        <button onclick="shareUrl('${d.url}')"
+          class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+          </svg>
+          Share
+        </button>
+      </div>
       <p class="font-semibold text-slate-900 truncate mb-3">${d.url}</p>
       <div class="grid grid-cols-2 gap-2 text-sm">
         <div class="bg-slate-50 rounded-lg p-2">
@@ -283,7 +370,10 @@ function renderScoreCard(d, score) {
       <p class="mt-3 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
         ⚠️ LLM scoring unavailable — score is rule-based only (out of 70 pts, scaled to 100).
         Set <code>GROQ_API_KEY</code> and <code>ENABLE_LLM=true</code> to enable full scoring.
-      </p>` : ''}
+      </p>` : `
+      <p class="mt-3 text-xs text-purple-700 bg-purple-50 rounded-lg px-3 py-2 border border-purple-200">
+        ✨ LLM scoring active — content quality and citation likelihood included in score.
+      </p>`}
       <p class="mt-2 text-xs text-slate-400 italic">${d.llms_txt_note}</p>
     </div>
   </div>`;
@@ -515,6 +605,23 @@ function toggleCollapsible(id) {
 
 function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Share URL ─────────────────────────────────────────────────────────────────
+function shareUrl(url) {
+  const shareLink = `${location.origin}${location.pathname}#url=${encodeURIComponent(url)}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(shareLink).then(() => {
+      // Brief toast
+      const btn = document.querySelector(`button[onclick="shareUrl('${url}')"]`);
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.textContent = '✓ Copied!';
+        btn.classList.add('text-green-600');
+        setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('text-green-600'); }, 2000);
+      }
+    });
+  }
 }
 
 // ── Keyboard shortcut: Enter ───────────────────────────────────────────────

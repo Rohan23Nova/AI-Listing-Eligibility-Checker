@@ -402,8 +402,9 @@ async def run_empirical_tester(
             "reason": "No Tier-1 anomaly — geo trip-wire not needed",
         }
 
-    # ── LLM citation likelihood (call #2) ─────────────────────────────────────
-    llm_score, llm_label, llm_reasoning = await _llm_citation_likelihood(
+    # ── LLM citation likelihood (call #2 — via centralized llm_client, cached) ──
+    from backend.llm_client import llm_citation_likelihood
+    llm_result = await llm_citation_likelihood(
         url=url,
         meta_description=meta_description,
         json_ld_types=json_ld_types or [],
@@ -413,10 +414,11 @@ async def run_empirical_tester(
     )
 
     raw_evidence["llm_citation"] = {
-        "provider": EFFECTIVE_LLM_PROVIDER,
-        "score": llm_score,
-        "label": llm_label,
-        "reasoning": llm_reasoning,
+        "provider": llm_result.provider,
+        "score": llm_result.score,
+        "label": llm_result.label,
+        "reasoning": llm_result.reasoning,
+        "cached": llm_result.cached,
     }
 
     return EmpiricalResult(
@@ -424,8 +426,8 @@ async def run_empirical_tester(
         tier_reached=tier_reached,
         ua_matrix=ua_results,
         geo_anomaly_detected=geo_anomaly_detected,
-        llm_citation_score=llm_score,
-        llm_citation_label=llm_label,
-        llm_citation_reasoning=llm_reasoning,
+        llm_citation_score=llm_result.score,
+        llm_citation_label=llm_result.label,
+        llm_citation_reasoning=llm_result.reasoning,
         raw_evidence=raw_evidence,
     )

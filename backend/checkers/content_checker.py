@@ -389,14 +389,13 @@ async def run_content_checker(url: str, html: str | None = None) -> ContentResul
         # Heuristic fired but Playwright is disabled — note this in evidence
         error = "SPA heuristic fired (near-empty body + JS bundles) but ENABLE_PLAYWRIGHT=false. Enable it for accurate content analysis."
 
-    # Step 5: LLM content quality judgment
-    llm_score, llm_label, llm_reasoning = await _llm_content_quality(
-        final_text[:LLM_EXCERPT_CHARS], url
-    )
+    # Step 5: LLM content quality judgment (via centralized llm_client — cached)
+    from backend.llm_client import llm_content_quality
+    llm_result = await llm_content_quality(url=url, text_excerpt=final_text[:LLM_EXCERPT_CHARS])
 
     raw_evidence: dict[str, Any] = {
         "body_word_count": body_word_count,
-        "visible_text_excerpt": visible_text[:500],  # brief excerpt for evidence
+        "visible_text_excerpt": visible_text[:500],
         "has_js_bundles": has_bundles,
         "bundle_urls": bundle_urls[:5],
         "likely_spa": likely_spa,
@@ -407,9 +406,10 @@ async def run_content_checker(url: str, html: str | None = None) -> ContentResul
             "js_bundle_required": True,
         },
         "llm": {
-            "provider": EFFECTIVE_LLM_PROVIDER,
-            "score": llm_score,
-            "label": llm_label,
+            "provider": llm_result.provider,
+            "score": llm_result.score,
+            "label": llm_result.label,
+            "cached": llm_result.cached,
         },
     }
 
@@ -419,9 +419,9 @@ async def run_content_checker(url: str, html: str | None = None) -> ContentResul
         likely_spa=likely_spa,
         playwright_used=playwright_used,
         rendered_word_count=rendered_word_count,
-        llm_quality_score=llm_score,
-        llm_quality_label=llm_label,
-        llm_quality_reasoning=llm_reasoning,
+        llm_quality_score=llm_result.score,
+        llm_quality_label=llm_result.label,
+        llm_quality_reasoning=llm_result.reasoning,
         raw_evidence=raw_evidence,
         error=error,
     )
