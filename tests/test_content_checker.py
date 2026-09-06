@@ -19,7 +19,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from backend.checkers.content_checker import (
-    _extract_visible_text,
+    _extract_main_content,
     _count_words,
     _detect_js_bundles,
     _is_likely_spa,
@@ -31,25 +31,25 @@ from backend.checkers.content_checker import (
 
 # ── Text extraction tests ─────────────────────────────────────────────────────
 
-def test_extract_visible_text_strips_scripts():
+def test_extract_main_content_strips_scripts():
     html = """<html><body>
     <script>var x = 1; document.write('invisible');</script>
     <style>.foo { color: red; }</style>
     <p>This is visible content.</p>
     </body></html>"""
-    text = _extract_visible_text(html)
+    text, fallback = _extract_main_content(html)
     assert "invisible" not in text
     assert "color" not in text
     assert "visible content" in text
 
 
-def test_extract_visible_text_strips_nav_footer():
+def test_extract_main_content_strips_nav_footer():
     html = """<html><body>
     <nav>Home About Contact</nav>
     <main><h1>Main Article</h1><p>Real content here.</p></main>
     <footer>Copyright 2025</footer>
     </body></html>"""
-    text = _extract_visible_text(html)
+    text, fallback = _extract_main_content(html)
     assert "Real content here" in text
     # Nav/footer stripped
     assert "Copyright" not in text
@@ -162,7 +162,8 @@ async def test_content_checker_heuristic_only_path():
 
     with patch("backend.checkers.content_checker.fetch_html", return_value=(rich_html, 200, None)), \
          patch("backend.checkers.content_checker.ENABLE_PLAYWRIGHT", False), \
-         patch("backend.checkers.content_checker.ENABLE_LLM", False):
+         patch("backend.checkers.content_checker.ENABLE_LLM", False), \
+         patch("backend.llm_client.ENABLE_LLM", False):
 
         result = await run_content_checker("https://example.com")
 
@@ -257,3 +258,26 @@ async def test_content_checker_fetch_error():
     assert result.error is not None
     assert result.body_word_count == 0
     assert result.likely_spa is False
+
+def test_extract_main_content_heuristic_strips_class_nav():
+    html = """<html><body>
+    <div class="site-navigation-menu">
+       <ul><li>Home</li><li>Products</li><li>Contact</li><li>Blog</li><li>FAQ</li></ul>
+       <p>Some extra nav text</p>
+    </div>
+    <div id="cookie-banner">Accept our cookies!</div>
+    <div class="main-article-content">
+       <p>This is the actual medical article about healthline stuff.</p>
+       <p>It contains multiple paragraphs to be recognized as the main block.</p>
+    </div>
+    <div class="footer-widget">Footer links</div>
+    </body></html>"""
+    
+    text, fallback = _extract_main_content(html)
+    assert "actual medical article" in text
+    assert "multiple paragraphs" in text
+    assert "Home" not in text
+    assert "Contact" not in text
+    assert "cookie" not in text.lower()
+    assert "Footer links" not in text
+    assert fallback is False, "Should have successfully triggered main content heuristic"

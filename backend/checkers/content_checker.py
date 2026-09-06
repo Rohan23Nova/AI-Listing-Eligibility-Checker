@@ -88,21 +88,68 @@ async def fetch_html(url: str) -> tuple[str | None, int | None, str | None]:
         return None, None, str(e)
 
 
-def _extract_visible_text(html: str) -> str:
+def _extract_main_content(html: str) -> tuple[str, bool]:
     """
-    Extract visible text from HTML, stripping scripts, styles, and nav boilerplate.
-    Returns plain text suitable for word-counting and LLM input.
+    Extract visible text from HTML, aggressively stripping scripts, styles, 
+    and nav/footer boilerplate. Prefers <article>, <main>, or the largest 
+    contiguous text block.
+    
+    Returns (extracted_text, fallback_used).
     """
     soup = BeautifulSoup(html, "lxml")
 
-    # Remove non-content elements
+    # 1. Strip non-content tags
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
         tag.decompose()
 
-    text = soup.get_text(separator=" ", strip=True)
-    # Collapse excessive whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    # Strip common boilerplate containers by class/id
+    boilerplate_keywords = ["menu", "navigation", "nav", "sidebar", "footer", "cookie", "banner", "ad", "advertisement"]
+    for tag in soup.find_all(True):
+        if getattr(tag, 'attrs', None) is None:
+            continue
+            
+        classes = tag.get("class", [])
+        if isinstance(classes, str):
+            classes = [classes]
+        tag_id = tag.get("id", "")
+        
+        identifiers = " ".join(classes).lower() + " " + tag_id.lower()
+        if any(kw in identifiers for kw in boilerplate_keywords):
+            # Don't decompose the whole body or semantic main containers if they mis-use a class
+            if tag.name not in ["body", "html", "main", "article"]:
+                tag.decompose()
+
+    # Helper to clean text
+    def _clean(t: str) -> str:
+        return re.sub(r"\s+", " ", t).strip()
+
+    # 2. Prefer <article> or <main>
+    semantic_containers = soup.find_all(["article", "main"])
+    if semantic_containers:
+        text = " ".join(c.get_text(separator=" ", strip=True) for c in semantic_containers)
+        text = _clean(text)
+        if text:
+            return text, False
+
+    # 3. Find largest contiguous text block (parent with most <p> text)
+    p_tags = soup.find_all("p")
+    if p_tags:
+        parent_scores = {}
+        for p in p_tags:
+            parent = p.parent
+            if parent not in parent_scores:
+                parent_scores[parent] = 0
+            parent_scores[parent] += len(p.get_text(strip=True))
+        
+        if parent_scores:
+            best_parent = max(parent_scores.items(), key=lambda x: x[1])[0]
+            text = _clean(best_parent.get_text(separator=" ", strip=True))
+            if text and len(text) > 100:
+                return text, False
+
+    # 4. Fallback: concatenate all remaining visible text
+    fallback_text = _clean(soup.get_text(separator=" ", strip=True))
+    return fallback_text, True
 
 
 def _count_words(text: str) -> int:
@@ -365,20 +412,21 @@ async def run_content_checker(url: str, html: str | None = None) -> ContentResul
             )
 
     # Step 2: Extract visible text from plain fetch
-    visible_text = _extract_visible_text(html)
-    body_word_count = _count_words(visible_text)
+    main_text, fallback_used = _extract_main_content(html)
+    body_word_count = _count_words(main_text)
 
     # Step 3: JS bundle heuristic
     has_bundles, bundle_urls = _detect_js_bundles(html)
     likely_spa = _is_likely_spa(body_word_count, has_bundles)
 
     # Step 4: Playwright escalation (only if heuristic fires AND feature enabled)
-    final_text = visible_text
+    final_text = main_text
+    pw_fallback_used = False
     if likely_spa and ENABLE_PLAYWRIGHT:
         playwright_used = True
         rendered_html, pw_error = await _render_with_playwright(url)
         if rendered_html:
-            rendered_text = _extract_visible_text(rendered_html)
+            rendered_text, pw_fallback_used = _extract_main_content(rendered_html)
             rendered_word_count = _count_words(rendered_text)
             final_text = rendered_text  # Use rendered text for LLM
         else:
@@ -395,7 +443,8 @@ async def run_content_checker(url: str, html: str | None = None) -> ContentResul
 
     raw_evidence: dict[str, Any] = {
         "body_word_count": body_word_count,
-        "visible_text_excerpt": visible_text[:500],
+        "visible_text_excerpt": main_text[:500],
+        "extraction_fallback_used": pw_fallback_used if playwright_used else fallback_used,
         "has_js_bundles": has_bundles,
         "bundle_urls": bundle_urls[:5],
         "likely_spa": likely_spa,
