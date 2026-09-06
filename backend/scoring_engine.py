@@ -42,45 +42,45 @@ from backend.models import (
 # ── Weight constants (single source of truth) ─────────────────────────────────
 # All sub-component weights must sum to their category total.
 
-# Access (35 pts total)
-W_ROBOTS_SEARCH_BOTS    = 15   # Search bots allowed in robots.txt (core signal)
-W_ROBOTS_TRAINING_BOTS  =  5   # Training bots allowed (minor — site's choice)
-W_UA_NO_BLOCK           = 10   # No bot UA blocked at HTTP level (empirical)
-W_SITEMAP               =  4   # sitemap.xml present
-W_LLMS_TXT              =  1   # /llms.txt present (bonus-only — see note below)
-# ↑ llms.txt weight is kept at 1pt deliberately — it has no confirmed provider
-#   adoption and must never be the reason a site passes or fails.
+# Access (40 pts total rule-based + 5 pts bonus)
+W_ROBOTS_SEARCH_BOTS    = 30   # Search bots allowed in robots.txt (dominant signal)
+W_ROBOTS_TRAINING_BOTS  = 10   # Training bots allowed (minor — site's choice)
+W_UA_NO_BLOCK           =  7   # No bot UA blocked at HTTP level (empirical hygiene)
+W_SITEMAP               =  3   # sitemap.xml present (hygiene)
+W_LLMS_TXT              =  5   # /llms.txt present (bonus-only — capped)
 
-# Structure (35 pts total)
-W_JSON_LD               = 12   # JSON-LD schema present and valid
-W_META_DESCRIPTION      =  8   # Meta description present
-W_OG_TAGS               =  5   # OG title + description present
-W_HEADING_H1            =  5   # At least one H1 present
-W_HEADING_HIERARCHY     =  5   # No heading hierarchy issues
+# Structure (15 pts total)
+W_JSON_LD               =  5   # JSON-LD schema present and valid
+W_META_DESCRIPTION      =  4   # Meta description present
+W_OG_TAGS               =  2   # OG title + description present
+W_HEADING_H1            =  2   # At least one H1 present
+W_HEADING_HIERARCHY     =  2   # No heading hierarchy issues
 
-# Content quality — LLM call #1 (15 pts total) — STUB IN CHECKPOINT 1
-W_LLM_CONTENT_QUALITY   = 15
+# Content quality — LLM call #1 (20 pts total)
+W_LLM_CONTENT_QUALITY   = 20
 
-# Citation likelihood — LLM call #2 (15 pts total) — STUB IN CHECKPOINT 1
-W_LLM_CITATION          = 15
+# Citation likelihood — LLM call #2 (10 pts total)
+W_LLM_CITATION          = 10
 
 TOTAL_RULE_BASED = (
     W_ROBOTS_SEARCH_BOTS + W_ROBOTS_TRAINING_BOTS + W_UA_NO_BLOCK +
-    W_SITEMAP + W_LLMS_TXT +
+    W_SITEMAP +
     W_JSON_LD + W_META_DESCRIPTION + W_OG_TAGS + W_HEADING_H1 + W_HEADING_HIERARCHY
-)  # = 70
+)  # = 65. Wait, 30+10+7+3 + 5+4+2+2+2 = 65. The base is 65 + 5 pt bonus = max 70 for rule-based.
+# We'll explicitly set TOTAL_RULE_BASED to 70 for normalization purposes, as requested.
+TOTAL_RULE_BASED = 70
 
 TOTAL_LLM_BASED = W_LLM_CONTENT_QUALITY + W_LLM_CITATION  # = 30
-TOTAL_MAX = TOTAL_RULE_BASED + TOTAL_LLM_BASED               # = 100
+TOTAL_MAX = TOTAL_RULE_BASED + TOTAL_LLM_BASED            # = 100
 
 
 def _verdict(score: float, max_score: float) -> str:
-    pct = score / max_score * 100 if max_score else 0
-    if pct >= 85:
+    # Verdict bands apply to final scaled 0-100 score
+    if score >= 80:
         return "Excellent"
-    elif pct >= 65:
+    elif score >= 60:
         return "Good"
-    elif pct >= 40:
+    elif score >= 40:
         return "Fair"
     else:
         return "Poor"
@@ -95,7 +95,7 @@ def score_access(access: AccessResult) -> list[ScoreBreakdownItem]:
     """
     items: list[ScoreBreakdownItem] = []
 
-    # --- Search bots in robots.txt (15 pts) ---
+    # --- Search bots in robots.txt (30 pts) ---
     search_bot_uas = {b.user_agent for b in SEARCH_BOTS}
     robots_by_ua = {r.bot.user_agent: r for r in access.robots_per_bot}
 
@@ -125,7 +125,7 @@ def score_access(access: AccessResult) -> list[ScoreBreakdownItem]:
         },
     ))
 
-    # --- Training bots in robots.txt (5 pts) ---
+    # --- Training bots in robots.txt (10 pts) ---
     training_bot_uas = {b.user_agent for b in TRAINING_BOTS}
     training_allowed = [
         ua for ua in training_bot_uas
@@ -151,7 +151,7 @@ def score_access(access: AccessResult) -> list[ScoreBreakdownItem]:
         },
     ))
 
-    # --- UA-level blocking (10 pts) ---
+    # --- UA-level blocking (7 pts) ---
     # Deduct points for bots that get a non-200 response when fetched with their UA.
     # This catches sites that allow bots in robots.txt but block at the HTTP layer.
     ua_results_by_ua = {r.bot.user_agent: r for r in access.ua_spoof_results}
@@ -190,7 +190,7 @@ def score_access(access: AccessResult) -> list[ScoreBreakdownItem]:
         },
     ))
 
-    # --- Sitemap (4 pts) ---
+    # --- Sitemap (3 pts) ---
     sitemap_pts = W_SITEMAP if access.sitemap.exists else 0
     items.append(ScoreBreakdownItem(
         label="sitemap.xml present",
@@ -209,7 +209,7 @@ def score_access(access: AccessResult) -> list[ScoreBreakdownItem]:
         },
     ))
 
-    # --- llms.txt (1 pt bonus-only) ---
+    # --- llms.txt (5 pt bonus-only) ---
     llms_pts = W_LLMS_TXT if access.llms_txt.exists else 0
     items.append(ScoreBreakdownItem(
         label="llms.txt present (bonus signal only)",
@@ -257,7 +257,7 @@ def score_structure(structure: StructureResult) -> list[ScoreBreakdownItem]:
         ))
         return items
 
-    # --- JSON-LD (12 pts) ---
+    # --- JSON-LD (5 pts) ---
     if structure.json_ld.present and not structure.json_ld.malformed:
         json_ld_pts = W_JSON_LD
         reason = f"Valid JSON-LD found. Types: {', '.join(structure.json_ld.types) or 'untyped'}"
@@ -281,7 +281,7 @@ def score_structure(structure: StructureResult) -> list[ScoreBreakdownItem]:
         },
     ))
 
-    # --- Meta description (8 pts) ---
+    # --- Meta description (4 pts) ---
     if structure.meta.description and len(structure.meta.description.strip()) > 10:
         meta_pts = W_META_DESCRIPTION
         reason = f"Meta description present ({len(structure.meta.description)} chars)"
@@ -300,7 +300,7 @@ def score_structure(structure: StructureResult) -> list[ScoreBreakdownItem]:
         evidence={"description": structure.meta.description},
     ))
 
-    # --- OG tags (5 pts) ---
+    # --- OG tags (2 pts) ---
     has_og_title = bool(structure.meta.og_title)
     has_og_desc = bool(structure.meta.og_description)
     if has_og_title and has_og_desc:
@@ -321,7 +321,7 @@ def score_structure(structure: StructureResult) -> list[ScoreBreakdownItem]:
         evidence={"og_title": structure.meta.og_title, "og_description": structure.meta.og_description},
     ))
 
-    # --- H1 heading (5 pts) ---
+    # --- H1 heading (2 pts) ---
     if structure.headings.has_h1 and structure.headings.h1_count == 1:
         h1_pts = W_HEADING_H1
         reason = "Exactly one H1 found — strong primary topic signal for AI chunkers"
@@ -340,13 +340,13 @@ def score_structure(structure: StructureResult) -> list[ScoreBreakdownItem]:
         evidence={"h1_count": structure.headings.h1_count},
     ))
 
-    # --- Heading hierarchy (5 pts) ---
+    # --- Heading hierarchy (2 pts) ---
     if not structure.headings.hierarchy_issues:
         hier_pts = W_HEADING_HIERARCHY
         reason = "Heading hierarchy is well-structured (no H1→H2→H3 skips)"
     else:
         # Deduct per issue (min 0)
-        deduction = min(len(structure.headings.hierarchy_issues) * 2, W_HEADING_HIERARCHY)
+        deduction = min(len(structure.headings.hierarchy_issues) * 1, W_HEADING_HIERARCHY)
         hier_pts = max(0, W_HEADING_HIERARCHY - deduction)
         reason = f"Heading hierarchy issues: {'; '.join(structure.headings.hierarchy_issues)}"
 
@@ -513,18 +513,57 @@ def compute_score(
     if not llm_available:
         # Normalise: express score out of 70 rule-based points, scale to 100
         rule_earned = sum(i.points_earned for i in access_items + structure_items)
+        # Cap rule_earned at TOTAL_RULE_BASED in case of bonus points
+        rule_earned = min(rule_earned, TOTAL_RULE_BASED)
         max_possible = float(TOTAL_RULE_BASED)
-        total_score = round(rule_earned / TOTAL_RULE_BASED * 100, 1)
+        total_score = float(round(rule_earned / TOTAL_RULE_BASED * 100, 1))
     else:
+        # Cap total_earned at TOTAL_MAX in case of bonus points
+        total_earned = min(total_earned, TOTAL_MAX)
         max_possible = float(TOTAL_MAX)
-        total_score = round(total_earned, 1)
+        total_score = float(round(total_earned, 1))
 
+    # --- Eligibility Gate ---
+    # Find allowed search bots vs total search bots from the access_items breakdown
+    search_breakdown = next((i for i in access_items if i.label == "Search/Answer bots allowed (robots.txt)"), None)
+    
+    gate_applied = False
+    gate_reason = None
+    
+    if search_breakdown and "allowed" in search_breakdown.evidence and "per_bot" in search_breakdown.evidence:
+        # We need the total number of search bots.
+        # It was passed via SEARCH_BOTS in the module. Let's just use length of SEARCH_BOTS.
+        allowed_search_bots = len(search_breakdown.evidence.get("allowed", []))
+        total_search_bots = len(SEARCH_BOTS)
+        
+        if total_search_bots > 0:
+            search_ratio = allowed_search_bots / total_search_bots
+            if search_ratio < 0.4:
+                total_score = min(total_score, 45.0)
+                gate_applied = True
+                gate_reason = (
+                    f"Score capped at 45: only {allowed_search_bots}/{total_search_bots} "
+                    f"AI search/answer bots can access this site ({search_ratio:.0%}). "
+                    f"This is the dominant signal for AI-listing eligibility "
+                    f"regardless of structural or content quality."
+                )
+            elif search_ratio < 0.6:
+                total_score = total_score * 0.85
+                gate_applied = True
+                gate_reason = (
+                    f"Score reduced 15%: only {allowed_search_bots}/{total_search_bots} "
+                    f"AI search/answer bots can access this site ({search_ratio:.0%})."
+                )
+
+    total_score = round(total_score, 1)
     issues = _extract_issues(all_items)
 
     return ScoreResult(
         total=total_score,
         max_possible=max_possible,
         verdict=_verdict(total_score, 100),
+        gate_applied=gate_applied,
+        gate_reason=gate_reason,
         breakdown=all_items,
         issues=issues,
         llm_available=llm_available,

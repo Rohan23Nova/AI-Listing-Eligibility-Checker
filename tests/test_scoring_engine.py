@@ -355,3 +355,84 @@ def test_compute_score_raw_evidence_present():
 
     for item in score.breakdown:
         assert item.evidence is not None, f"Missing evidence for: {item.label}"
+
+
+# ── Eligibility Gate Tests ───────────────────────────────────────────────────
+
+def test_eligibility_gate_poor_access():
+    """1/5 search bots allowed -> <0.4 ratio -> score capped at 45."""
+    # Force exactly 1 search bot to be allowed
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    # Modify robots_per_bot to block 4 out of 5 search bots
+    search_uas = [b.user_agent for b in SEARCH_BOTS]
+    for r in access.robots_per_bot:
+        if r.bot.user_agent in search_uas[1:]:
+            r.allowed = False
+    
+    structure = _make_structure_result()
+    score = compute_score(access, structure)
+    
+    assert score.gate_applied is True
+    assert score.gate_reason is not None
+    assert "capped at 45" in score.gate_reason
+    assert score.total <= 45.0
+    assert score.verdict in ("Poor", "Fair")
+
+
+def test_eligibility_gate_fair_access():
+    """4/5 search bots allowed -> no cap, high score retained."""
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    search_uas = [b.user_agent for b in SEARCH_BOTS]
+    for r in access.robots_per_bot:
+        if r.bot.user_agent in search_uas[4:]:
+            r.allowed = False
+    
+    structure = _make_structure_result()
+    score = compute_score(access, structure)
+    
+    assert score.gate_applied is False
+    assert score.gate_reason is None
+    # 4/5 search bots allowed, excellent structure -> score should be high (>= 80)
+    assert score.total > 80.0
+
+
+def test_eligibility_gate_perfect_access():
+    """5/5 search bots allowed -> no penalty."""
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    structure = _make_structure_result()
+    score = compute_score(access, structure)
+    
+    assert score.gate_applied is False
+    assert score.gate_reason is None
+    assert score.total == 100.0
+
+
+def test_eligibility_gate_boundary_exact_0_4():
+    """Exactly 0.4 ratio (e.g. 2/5) should NOT trigger the <0.4 branch but SHOULD trigger <0.6."""
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    search_uas = [b.user_agent for b in SEARCH_BOTS]
+    for r in access.robots_per_bot:
+        if r.bot.user_agent in search_uas[2:]:
+            r.allowed = False
+            
+    structure = _make_structure_result()
+    score = compute_score(access, structure)
+    
+    assert score.gate_applied is True
+    assert "reduced 15%" in score.gate_reason
+    assert "capped at 45" not in score.gate_reason
+
+
+def test_eligibility_gate_boundary_exact_0_6():
+    """Exactly 0.6 ratio (e.g. 3/5) should NOT trigger <0.6 branch (no penalty)."""
+    access = _make_access_result(all_allowed=True, sitemap=True, llms_txt=True)
+    search_uas = [b.user_agent for b in SEARCH_BOTS]
+    for r in access.robots_per_bot:
+        if r.bot.user_agent in search_uas[3:]:
+            r.allowed = False
+            
+    structure = _make_structure_result()
+    score = compute_score(access, structure)
+    
+    assert score.gate_applied is False
+    assert score.gate_reason is None

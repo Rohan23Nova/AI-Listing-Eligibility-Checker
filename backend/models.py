@@ -287,6 +287,8 @@ class ScoreResult:
     total: float                            # 0–100
     max_possible: float                     # Usually 100, may be lower if LLM unavailable
     verdict: str                            # "Excellent" | "Good" | "Fair" | "Poor"
+    gate_applied: bool                      # Was the search-bot eligibility gate triggered?
+    gate_reason: str | None                 # Human-readable explanation if gate applied
     breakdown: list[ScoreBreakdownItem]
     issues: list[dict[str, str]]            # [{severity, title, fix}, ...]
     llm_available: bool
