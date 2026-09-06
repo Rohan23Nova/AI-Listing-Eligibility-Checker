@@ -1,0 +1,29 @@
+# ============================================================
+# AI Listing Eligibility Checker — Python dependencies
+# Install via: pip install -r requirements.txt
+# ============================================================
+
+# Web framework
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
+# HTTP client (async, used for all network I/O)
+httpx==0.28.1
+
+# HTML parsing
+beautifulsoup4==4.15.0
+lxml==6.1.3
+
+# Async SQLite (history store)
+aiosqlite==0.22.1
+
+# Environment variable loading
+python-dotenv==1.2.3
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+respx==0.23.1          # httpx request mocking
+
+# Code quality (optional but configured in pyproject.toml)
+ruff>=0.4.0

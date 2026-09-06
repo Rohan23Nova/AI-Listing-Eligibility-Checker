@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+.venv/
+venv/
+env/
+.env
+*.env.local
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Playwright
+playwright-report/
+test-results/
+
+# Node / Frontend
+node_modules/
+.next/
+.nuxt/
+dist/
+.cache/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Cloudflare Workers
+workers/.wrangler/
+workers/dist/
